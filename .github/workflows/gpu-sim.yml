@@ -1,0 +1,96 @@
+name: HIP tests (simulated MI300X)
+
+# Runs the hipSZ round-trip tests on a simulated AMD MI300X (gfx942) with
+# https://github.com/pantheongpu/pantheonsim, since hosted runners have no GPU.
+# A simulator cannot reproduce hardware-specific behavior or timing, so this
+# complements real-GPU testing and does not replace it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "include/**"
+      - "examples/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/gpu-sim.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hip-sim:
+    name: ROCm 7.1, simulated MI300X
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up the simulated GPU and ROCm
+        uses: pantheongpu/setup-pantheonsim@deff5781e8adfd83dec98dd5242dcbc96a564773 # v0.1.10
+        with:
+          gpu: amd/mi300x
+          cuda-toolkit: none
+          rocm: "7.1"
+
+      # find_package(hip) needs the amd_comgr CMake config and the HSA runtime
+      # library, which the action's compiler-only install does not include.
+      - name: Install comgr and the HSA runtime
+        run: sudo apt-get install -y comgr hsa-rocr
+
+      # The test programs use 2 GB (f32) and 4 GB (f64) of data, more than a
+      # simulated GPU on a 16 GB runner can hold, so the sizes are reduced to
+      # 4M elements for this job only. The edit is made on the checkout and is
+      # not committed. CMakeLists.txt hardcodes gfx926, so the architecture is
+      # switched to gfx942 here as well.
+      - name: Adjust target and test data size
+        run: |
+          sed -i 's/nbEle = 1024\*1024\*[0-9]*;/nbEle = 1024*1024*4;/' examples/hipSZ_test_f*.cpp
+          sed -i 's/CMAKE_HIP_ARCHITECTURES gfx926/CMAKE_HIP_ARCHITECTURES gfx942/' CMakeLists.txt
+          git diff --stat
+
+      # CMakeLists.txt looks for `clang` on PATH, and the plain C++ examples
+      # need the ROCm headers.
+      - name: Configure project
+        run: |
+          export PATH="$PATH:/opt/rocm/llvm/bin"
+          cmake -B build -S . \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_PREFIX_PATH=/opt/rocm \
+                -DCMAKE_CXX_FLAGS=-I/opt/rocm/include \
+                -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+
+      - name: Build and install
+        run: |
+          export PATH="$PATH:/opt/rocm/llvm/bin"
+          cmake --build build -j3 --target install
+
+      # Each test prints "Pass error check!" or "Fail error check!" for the
+      # plain and outlier modes, but always exits with status 0, so the output
+      # is checked here: both modes must pass and the simulator must not have
+      # reported an error.
+      - name: Run tests
+        working-directory: install/bin
+        run: |
+          status=0
+          for t in hipSZ_test_f32 hipSZ_test_f64; do
+            echo "::group::$t"
+            vgpu run ./$t 2>&1 | tee "$t.log"
+            rc=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            passed=$(grep -c "Pass error check" "$t.log" || true)
+            if [ "$rc" -ne 0 ] || [ "$passed" -ne 2 ] \
+               || grep -qiE "Fail error check|VirtualGPU error|no device|no ROCm-capable" "$t.log"; then
+              echo "::error::$t failed (exit $rc, $passed of 2 modes passed)"
+              status=1
+            fi
+          done
+          exit $status
