@@ -1,180 +1,125 @@
-<h1 align="center">
-A HIP-Based Error-Bounded Lossy Compressor for Scientific Data
-</h1>
+# hipSZ
 
-<p align="center">
-<a href="./LICENSE"><img src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg"></a>
-</p>
+**HIP-based error-bounded lossy compression for scientific data**
 
-hipSZ is a [HIP](https://github.com/ROCm/HIP) implementation of the widely used [SZ](https://szcompressor.org/) lossy compression framework for scientific data, specifically based on the [cuSZp](https://github.com/szcompressor/cuSZp) algorithm. It is the *first* error-bounded lossy compressor that can run on mainstream HPC/AI accelerators including Nvidia GPUs, AMD GPUs, and Hygon DCUs via [ROCm](https://www.amd.com/en/products/software/rocm.html) platform. 
+[![BSD 3-Clause License](https://img.shields.io/badge/license-BSD%203--Clause-blue)](LICENSE)
 
-(C) 2024 by Chinese Academy of Sciences and University of Science and Technology of China. See [COPYRIGHT](https://github.com/szcompressor/hipSZ/blob/master/LICENSE) in top-level directory.
+hipSZ compresses FP32 and FP64 scientific arrays on AMD GPUs and Hygon DCUs. It provides a command-line tool and a C++ API for data already in device memory. Both interfaces support plain and outlier-aware encoding. The HIP implementation is based on [cuSZp](https://github.com/szcompressor/cuSZp).
 
-- Developers: Shengquan Yin, [Dingwen Tao](https://www.dingwentao.com/) (advisor), [Guangming Tan](https://tanniu.github.io/) (advisor)
+[Build](#build) · [Quick start](#quick-start) · [C++ API](#c-api) · [Hygon K100 example](#hygon-k100-example)
 
-## Environment Requirements
-- Linux OS with AMD GPU or Hygon DCU
-- Git >= 2.15
-- CMake >= 3.21
-- ROCm >= 6.2 or DCU Toolkit >= 24.04.1
-- clang >= 15.0.0
-- CUDA Toolkit（TODO）
+## Build
 
-## Compile and Use hipSZ
+Use Linux with CMake 3.21 or later and a C++17 toolchain. Put `clang` and `hipcc` on your `PATH`.
 
-You can compile and install hipSZ with following commands.
-```shell
-$ git clone https://github.com/szcompressor/hipSZ.git
-$ cd hipSZ
-$ mkdir build && cd build
-$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=../install/ ..
-$ make -j
-$ make install
-```
-After installation, you will see executable binary generated in ```hipSZ/install/bin/``` and shared/static library generated in ``hipSZ/install/lib/``.
-You can also try ```ctest -V``` in ```hipSZ/build/``` folder (Optional).
+| Hardware | Toolkit |
+| --- | --- |
+| Hygon DCU | DCU Toolkit (DTK) 24.04.1 or later |
+| AMD GPU | ROCm 6.2 or later |
 
-### Using hipSZ Prepared Executable Binary
-After installation, you will see ```hipSZ``` binary generated in ```hipSZ/install/bin/```. The detailed usage of this binary are explained in the code block below.
-
-```text
-Usage:
-./hipSZ -i [oriFilePath] -t [dataType] 
-        -m [encodingMode] -eb [errorBoundMode] [errorBound] 
-        -x [cmpFilePath] -o [decFilePath]
-
-Options:
-  -i  [oriFilePath]    Path to the input file containing the original data
-  -t  [dataType]       Data type of the input data. Options:
-                       f32      : Single precision (float)
-                       f64      : Double precision (double)
-  -m  [encodingMode]   Encoding mode to use. Options:
-                       plain    : Plain fixed-length encoding mode
-                       outlier  : Outlier fixed-length encoding mode
-  -eb [errorBoundMode] [errorBound]
-                       errorBoundMode can only be:
-                       abs      : Absolute error bound
-                       rel      : Relative error bound
-                       errorBound is a floating-point number representing the error bound, e.g. 1E-4, 0.03.
-  -x  [cmpFilePath]    Path to the compressed output file (optional)
-  -o  [decFilePath]    Path to the decompressed output file (optional)
+```bash
+git clone https://github.com/opensdc-org/hipSZ.git
+cd hipSZ
 ```
 
-Some example commands can be found here:
-```shell
-./hipSZ -i CLDLIQ_1_26_1800_3600.f32 -t f32 -m plain -eb rel 1e-4
-./hipSZ -i CLDLIQ_1_26_1800_3600.f32 -t f32 -m outlier -eb rel 1e-4
+The current [CMake configuration](CMakeLists.txt) sets `CMAKE_HIP_ARCHITECTURES` to `gfx926`. Edit that setting before configuring if your device has a different target. For example, set it to `gfx942` for an AMD MI300X.
+
+Set `HIP_ROOT` to the prefix containing your HIP headers and CMake package. For a DCU, load the DTK environment and use its HIP installation prefix.
+
+```bash
+HIP_ROOT=/opt/rocm
+export PATH="$HIP_ROOT/bin:$HIP_ROOT/llvm/bin:$PATH"
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$HIP_ROOT" \
+  -DCMAKE_CXX_FLAGS="-I$HIP_ROOT/include" \
+  -DCMAKE_INSTALL_PREFIX="$PWD/install"
+cmake --build build --parallel --target install
 ```
 
-Some results measured on one Hygon K100 DCU can be shown as below:
-```shell
-$ ./hipSZ -i CLDLIQ_1_26_1800_3600.f32 -t f32 -m plain -eb rel 1e-4
-hipSZ finished!
-hipSZ compression   end-to-end speed: 135.495201 GB/s
-hipSZ decompression end-to-end speed: 272.553248 GB/s
-hipSZ compression ratio: 9.897107
+The install tree contains the CLI and test executables in `install/bin/`, the hipSZ libraries, and the public header `install/include/hipSZ.h`.
 
-Pass error check!
+## Quick start
 
-$ ./hipSZ -i CLDLIQ_1_26_1800_3600.f32 -t f32 -m outlier -eb rel 1e-4 
-hipSZ finished!
-hipSZ compression   end-to-end speed: 65.323701 GB/s
-hipSZ decompression end-to-end speed: 182.146842 GB/s
-hipSZ compression ratio: 17.361573
+The CLI reads a raw, contiguous array of `f32` or `f64` values. For a quick round trip, generate a small FP32 input and run:
 
-Pass error check!
+```bash
+python3 - <<'PY'
+from array import array
+from math import sin
+
+values = array("f", (sin(i * 0.001) for i in range(1 << 20)))
+with open("sample.f32", "wb") as output:
+    values.tofile(output)
+PY
+
+./install/bin/hipSZ -i sample.f32 -t f32 -m plain -eb abs 1e-3
 ```
 
-You will also see two binaries generated this folder, named ```hipSZ_test_f32``` and ```hipSZ_test_f64```. They are used for functionality test and can be executed by ```./hipSZ_test_f32``` and ```./hipSZ_test_f64```.
+The tool compresses the input, reconstructs it, and reports the compression ratio, throughput, and error check.
 
-### Using hipSZ as C/C++ Interal API
-If you want to use hipSZ as a C/C++ interal API, there are two ways.
+| Option | Meaning |
+| --- | --- |
+| `-i PATH` | Raw floating-point input |
+| `-t f32\|f64` | Input data type |
+| `-m plain\|outlier` | Plain fixed-length or outlier-aware encoding |
+| `-eb abs VALUE` | Absolute error bound |
+| `-eb rel VALUE` | Range-relative error bound, converted to `VALUE × (max − min)` |
+| `-x PATH` | Optional compressed output |
+| `-o PATH` | Optional reconstructed output |
 
-1. Use the hipSZ generic API.
-    
-    ```C
-    // Other headers.
-    #include <hipSZ.h>
-    
-    int main (int argc, char* argv[]) {
-        
-        // Other code.
+<a name="using-hipsz-prepared-executable-binary"></a>
 
-        // For measuring the end-to-end throughput.
-        TimingGPU timer_GPU;
+## Hygon K100 example
 
-        // hipSZ compression for device pointer.
-        timer_GPU.StartCounter(); // set timer
-        hipSZ_compress(d_oriData, d_cmpBytes, nbEle, &cmpSize, errorBound, dataType, encodingMode, stream);
-        float cmpTime = timer_GPU.GetCounter();
+These measurements were recorded on a single Hygon K100 DCU with `CLDLIQ_1_26_1800_3600.f32` and `-eb rel 1e-4`. The rates are the values reported by the CLI for the timed compression and decompression calls.
 
-        // hipSZ decompression for device pointer.
-        timer_GPU.StartCounter(); // set timer
-        hipSZ_decompress(d_decData, d_cmpBytes, nbEle, cmpSize, errorBound, dataType, encodingMode, stream);
-        float decTime = timer_GPU.GetCounter();
+| Encoding | Compression (GB/s) | Decompression (GB/s) | Compression ratio |
+| --- | ---: | ---: | ---: |
+| Plain | 135.50 | 272.55 | 9.90× |
+| Outlier | 65.32 | 182.15 | 17.36× |
 
-        // Other code.
+Both runs passed the CLI's reconstruction error check.
 
-        return 0;
-    }
-    ```
+```bash
+./install/bin/hipSZ -i CLDLIQ_1_26_1800_3600.f32 -t f32 -m plain -eb rel 1e-4
+./install/bin/hipSZ -i CLDLIQ_1_26_1800_3600.f32 -t f32 -m outlier -eb rel 1e-4
+```
 
-    Here, ```d_oriData```, ```d_cmpBytes```, and ```d_decData``` are device pointers (array on GPU), representing original data, compressed byte, and reconstructed data, respectively.
-    ```dataType``` and ```encodingMode``` can be defined as below:
-    ```C
-    hipsz_type_t dataType = HIPSZ_TYPE_FLOAT; // or HIPSZ_TYPE_DOUBLE
-    hipsz_mode_t encodingMode = HIPSZ_MODE_PLAIN; // or HIPSZ_MODE_OUTLIER
-    ```
+## C++ API
 
-    A detailed example can be seen in ```hipSZ/examples/hipSZ.cpp```.
+Include [`hipSZ.h`](include/hipSZ.h) and link hipSZ with the HIP runtime. The generic functions take a data type, an encoding mode, an absolute error bound, and a HIP stream.
 
-2. Use a specific encoding mode and floating-point data type (f32 or f64).
+```cpp
+#include <hipSZ.h>
 
-    ```C
-    #include <hipSZ.h> // Still the only header you need.
+void roundtrip(float* input_d, unsigned char* compressed_d, float* output_d,
+               std::size_t count, float abs_error, hipStream_t stream) {
+    std::size_t compressed_bytes = 0;
+    hipSZ_compress(input_d, compressed_d, count, &compressed_bytes, abs_error,
+                   HIPSZ_TYPE_FLOAT, HIPSZ_MODE_PLAIN, stream);
+    hipSZ_decompress(output_d, compressed_d, count, compressed_bytes, abs_error,
+                     HIPSZ_TYPE_FLOAT, HIPSZ_MODE_PLAIN, stream);
+}
+```
 
-    // Compression and decompression for float type data array using plain mode.
-    hipSZ_compress_plain_f32(d_oriData, d_cmpBytes, nbEle, &cmpSize, errorBound, stream);
-    hipSZ_decompress_plain_f32(d_decData, d_cmpBytes, nbEle, cmpSize, errorBound, stream);
-    // In this case, d_oriData and d_Decdata are float* array on GPU.
-    ```
-    
-    <details>
-    <summary>Other modes and data type usages</summary>
+Allocate the input, compressed, and reconstructed buffers in device memory before calling the API. Compression writes the compressed byte count to a host variable. For decoding, supply the original element count, type, mode, and absolute error bound.
 
-    ```C
-    #include <hipSZ.h> // Still the only header you need.
+The header also exposes type- and mode-specific functions such as `hipSZ_compress_plain_f32` and `hipSZ_decompress_outlier_f64`. See the [FP32 example](examples/hipSZ_test_f32.cpp) and [FP64 example](examples/hipSZ_test_f64.cpp) for buffer setup and checks in both modes.
 
-    // Compression and decompression for float type data array using outlier mode.
-    hipSZ_compress_outlier_f32(d_oriData, d_cmpBytes, nbEle, &cmpSize, errorBound, stream);
-    hipSZ_decompress_outlier_f32(d_decData, d_cmpBytes, nbEle, cmpSize, errorBound, stream);
-    // In this case, d_oriData and d_Decdata are float* array on GPU.
+<!-- Document optimized interfaces here when they are merged. Include supported
+data types and architectures, buffer and stream requirements, and a matching example. -->
 
-    // Compression and decompression for double type data array using plain mode.
-    hipSZ_compress_plain_f64(d_oriData, d_cmpBytes, nbEle, &cmpSize, errorBound, stream);
-    hipSZ_decompress_plain_f64(d_decData, d_cmpBytes, nbEle, cmpSize, errorBound, stream);
-    // In this case, d_oriData and d_Decdata are double* array on GPU.
+## Tests
 
-    // Compression and decompression for double type data array using outlier mode.
-    hipSZ_compress_outlier_f64(d_oriData, d_cmpBytes, nbEle, &cmpSize, errorBound, stream);
-    hipSZ_decompress_outlier_f64(d_decData, d_cmpBytes, nbEle, cmpSize, errorBound, stream);
-    // In this case, d_oriData and d_Decdata are double* array on GPU.
-    ```
-    </details>
+After installing, run `ctest --test-dir build --verbose`. Check the output for `Pass error check!` for both modes in each test. The full test inputs use 2 GiB for FP32 and 4 GiB for FP64, plus additional buffers.
 
-    
-    In this case, you do not need to set ```hipsz_type_t``` and ```hipsz_mode_t```.
-    More detaild examples can be found in ```hipSZ/examples/hipSZ_test_f32.cpp``` and ```hipSZ/examples/hipSZ_test_f64.cpp```.
+The [GPU CI workflow](.github/workflows/gpu-sim.yml) runs smaller FP32 and FP64 round-trip tests in a simulated AMD MI300X environment.
 
+## Credits and license
 
-### Using hipSZ as Python API
-TODO
+hipSZ was developed by Shengquan Yin, with Dingwen Tao and Guangming Tan as advisors. It is maintained in the [OpenSDC community](https://github.com/opensdc-org). For bug reports or integration questions, [open an issue](https://github.com/opensdc-org/hipSZ/issues).
 
-## Documentation
-TODO
+For the underlying algorithm, cite *cuSZp: An Ultra-Fast GPU Error-Bounded Lossy Compression Framework with Optimized End-to-End Performance*, SC 2023. [DOI: 10.1145/3581784.3607048](https://doi.org/10.1145/3581784.3607048).
 
-## Citation
-TODO
-
-## Clarification
-Due to political reasons between China and the U.S., the development of hipSZ is independent of other software and repositories under github.com/szcompressor. There is no administrative, legal connection, or collaboration between the developers of hipSZ and the U.S. developers of szcompressor software.
+hipSZ is distributed under the BSD 3-Clause License. The license file also includes the third-party notices for code incorporated from cuSZp. [License and notices](LICENSE).
