@@ -3,3 +3,9 @@ install
 build
 .DS_Store
 *.prehip
+consumer/build/
+*.o
+*.a
+*.so
+__pycache__/
+*.ISA

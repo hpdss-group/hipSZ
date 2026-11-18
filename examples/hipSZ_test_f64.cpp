@@ -74,9 +74,9 @@ int main()
     printf("=========Testing hipSZ-p-f64 on REL 1E-2=========\n");
     printf("=================================================\n");
     // hipSZ compression.
-    timer_GPU.StartCounter(); // set timer
+    timer_GPU.StartCounter(stream); // set timer
     hipSZ_compress_plain_f64(d_oriData, d_cmpBytes, nbEle, &cmpSize1, errorBound, stream);
-    float cmpTime = timer_GPU.GetCounter();
+    float cmpTime = timer_GPU.GetCounter(stream);
 
     // Transfer compressed data to CPU then back to GPU, making sure compression ratio is correct.
     // No need to add this part for real-world usages, this is only for testing compresion ratio correcness.
@@ -86,9 +86,9 @@ int main()
     hipMemcpy(d_cmpBytes, cmpBytes_dup1, cmpSize1*sizeof(unsigned char), hipMemcpyHostToDevice);
         
     // hipSZ decompression.
-    timer_GPU.StartCounter(); // set timer
+    timer_GPU.StartCounter(stream); // set timer
     hipSZ_decompress_plain_f64(d_decData, d_cmpBytes, nbEle, cmpSize1, errorBound, stream);
-    float decTime = timer_GPU.GetCounter();
+    float decTime = timer_GPU.GetCounter(stream);
 
     // Print result.
     printf("hipSZ-p finished!\n");
@@ -117,9 +117,9 @@ int main()
     printf("=========Testing hipSZ-o-f64 on REL 1E-2=========\n");
     printf("=================================================\n");
     // hipSZ compression.
-    timer_GPU.StartCounter(); // set timer
+    timer_GPU.StartCounter(stream); // set timer
     hipSZ_compress_outlier_f64(d_oriData, d_cmpBytes, nbEle, &cmpSize2, errorBound, stream);
-    cmpTime = timer_GPU.GetCounter();
+    cmpTime = timer_GPU.GetCounter(stream);
 
     // Transfer compressed data to CPU then back to GPU, making sure compression ratio is correct.
     // No need to add this part for real-world usages, this is only for testing compresion ratio correcness.
@@ -129,9 +129,9 @@ int main()
     hipMemcpy(d_cmpBytes, cmpBytes_dup2, cmpSize2*sizeof(unsigned char), hipMemcpyHostToDevice);
         
     // hipSZ decompression.
-    timer_GPU.StartCounter(); // set timer
+    timer_GPU.StartCounter(stream); // set timer
     hipSZ_decompress_outlier_f64(d_decData, d_cmpBytes, nbEle, cmpSize2, errorBound, stream);
-    decTime = timer_GPU.GetCounter();
+    decTime = timer_GPU.GetCounter(stream);
 
     // Print result.
     printf("hipSZ-o finished!\n");

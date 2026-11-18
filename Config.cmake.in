@@ -1,6 +1,17 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+
+# The exported targets link hip::host, so consumers need the HIP toolkit.
+# Honor the paths a DTK consumer typically provides.
+if(NOT DEFINED ROCM_PATH AND DEFINED ENV{ROCM_PATH})
+    set(ROCM_PATH "$ENV{ROCM_PATH}")
+endif()
+find_dependency(hip
+    PATHS ${ROCM_PATH} ${HIP_PATH} /opt/dtk /opt/dtk-26.04
+    PATH_SUFFIXES hip/lib/cmake lib/cmake
+)
+
 include("${CMAKE_CURRENT_LIST_DIR}/@PROJECT_NAME@Targets.cmake")
 
 check_required_components(@PROJECT_NAME@)
-

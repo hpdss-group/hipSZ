@@ -27,12 +27,14 @@ install(TARGETS hipSZ_shared
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}    # for executables
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}    # for shared libraries
         PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}  # for public headers (hipSZ.h)
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 # Install static library without headers to avoid duplication
 install(TARGETS hipSZ_static
         EXPORT hipSZTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}    # for static libraries
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 # Generate and install export file only once
