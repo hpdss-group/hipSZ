@@ -12,6 +12,8 @@ on:
       - "src/**"
       - "include/**"
       - "examples/**"
+      - "tests/**"
+      - "consumer/**"
       - "cmake/**"
       - "CMakeLists.txt"
       - ".github/workflows/gpu-sim.yml"
@@ -46,24 +48,24 @@ jobs:
       - name: Install comgr and the HSA runtime
         run: sudo apt-get install -y comgr hsa-rocr
 
-      # The test programs use 2 GB (f32) and 4 GB (f64) of data, more than a
-      # simulated GPU on a 16 GB runner can hold, so the sizes are reduced to
-      # 4M elements for this job only. The edit is made on the checkout and is
-      # not committed. CMakeLists.txt hardcodes gfx926, so the architecture is
-      # switched to gfx942 here as well.
-      - name: Adjust target and test data size
+      # The legacy 1D example programs use 2 GB (f32) and 4 GB (f64) of data,
+      # more than a simulated GPU on a 16 GB runner can hold, so their sizes
+      # are reduced to 4M elements for this job only. The edit is made on the
+      # checkout and is not committed. The architecture is passed explicitly
+      # below rather than patched into CMakeLists.txt.
+      - name: Reduce example data size
         run: |
           sed -i 's/nbEle = 1024\*1024\*[0-9]*;/nbEle = 1024*1024*4;/' examples/hipSZ_test_f*.cpp
-          sed -i 's/CMAKE_HIP_ARCHITECTURES gfx926/CMAKE_HIP_ARCHITECTURES gfx942/' CMakeLists.txt
           git diff --stat
 
-      # CMakeLists.txt looks for `clang` on PATH, and the plain C++ examples
+      # The HIP compiler is discovered from PATH and the plain C++ examples
       # need the ROCm headers.
       - name: Configure project
         run: |
           export PATH="$PATH:/opt/rocm/llvm/bin"
           cmake -B build -S . \
                 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_HIP_ARCHITECTURES=gfx942 \
                 -DCMAKE_PREFIX_PATH=/opt/rocm \
                 -DCMAKE_CXX_FLAGS=-I/opt/rocm/include \
                 -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
@@ -73,10 +75,10 @@ jobs:
           export PATH="$PATH:/opt/rocm/llvm/bin"
           cmake --build build -j3 --target install
 
-      # Each test prints "Pass error check!" or "Fail error check!" for the
-      # plain and outlier modes, but always exits with status 0, so the output
-      # is checked here: both modes must pass and the simulator must not have
-      # reported an error.
+      # The two legacy 1D examples print "Pass error check!" once for plain
+      # and once for outlier; both must pass. The edge suite covers the
+      # imported 1D/2D/3D fixed/plain/outlier paths and exits non-zero on
+      # failure.
       - name: Run tests
         working-directory: install/bin
         run: |
@@ -93,4 +95,14 @@ jobs:
               status=1
             fi
           done
+
+          echo "::group::hipSZ_test_edge"
+          vgpu run ./hipSZ_test_edge 2>&1 | tee hipSZ_test_edge.log
+          rc=${PIPESTATUS[0]}
+          echo "::endgroup::"
+          if [ "$rc" -ne 0 ] || ! grep -q "hipSZ_test_edge PASSED" hipSZ_test_edge.log \
+             || grep -qiE "VirtualGPU error|no device|no ROCm-capable" hipSZ_test_edge.log; then
+            echo "::error::hipSZ_test_edge failed (exit $rc)"
+            status=1
+          fi
           exit $status
